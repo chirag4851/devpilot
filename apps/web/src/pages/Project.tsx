@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import ContextSearch from "../components/ContextSearch";
 import { api } from "../lib/api";
 
 interface Project {
@@ -60,6 +61,11 @@ const ProjectPage = ({
 
     const [connecting, setConnecting] = useState(false);
 
+    // New states for updates/resync
+    const [hasUpdates, setHasUpdates] = useState(false);
+    const [resyncing, setResyncing] = useState(false);
+    const [resyncMessage, setResyncMessage] = useState("");
+
     useEffect(() => {
         const checkGitHubConnection = async () => {
             try {
@@ -118,6 +124,30 @@ const ProjectPage = ({
         loadRepository();
     }, [project.id]);
 
+    // New effect: check for repository drift/updates
+    useEffect(() => {
+        if (!repository) {
+            return;
+        }
+
+        const checkForUpdates = async () => {
+            try {
+                const data = await api<{ hasUpdates: boolean }>(
+                    `/projects/${project.id}/repository/status`,
+                    {
+                        headers: {
+                            Authorization: `Bearer ${localStorage.getItem("token")}`,
+                        },
+                    },
+                );
+                setHasUpdates(data.hasUpdates);
+            } catch (error) {
+                console.error("Failed to check repository status:", error);
+            }
+        };
+
+        checkForUpdates();
+    }, [repository, project.id]);
 
     const loadGitHubRepositories = async () => {
         setLoadingRepositories(true);
@@ -215,6 +245,35 @@ const ProjectPage = ({
             );
         } finally {
             setConnecting(false);
+        }
+    };
+
+    // New handler: resync
+    const handleResync = async () => {
+        setResyncing(true);
+        setResyncMessage("");
+
+        try {
+            const result = await api<{ chunkCount: number; edgeCount: number; sha: string }>(
+                `/projects/${project.id}/repository/resync`,
+                {
+                    method: "POST",
+                    headers: {
+                        Authorization: `Bearer ${localStorage.getItem("token")}`,
+                    },
+                },
+            );
+
+            setHasUpdates(false);
+            setResyncMessage(
+                `Resynced: ${result.chunkCount} chunks, ${result.edgeCount} relationships.`,
+            );
+        } catch (error) {
+            setResyncMessage(
+                error instanceof Error ? error.message : "Failed to resync repository",
+            );
+        } finally {
+            setResyncing(false);
         }
     };
 
@@ -472,7 +531,35 @@ const ProjectPage = ({
                                 </a>
                             </div>
                         )}
+
+                    {/* New drift/resync banner and result message */}
+                    {repository && hasUpdates && (
+                        <div
+                            style={{
+                                marginTop: "1rem",
+                                padding: "0.75rem 1rem",
+                                borderRadius: "8px",
+                                border: "1px solid #4a4a2a",
+                                background: "#2a2a1a",
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                            }}
+                        >
+                            <span>New changes detected in this repository.</span>
+                            <button type="button" onClick={handleResync} disabled={resyncing}>
+                                {resyncing ? "Resyncing..." : "Resync now"}
+                            </button>
+                        </div>
+                    )}
+
+                    {repository && resyncMessage && (
+                        <div style={{ marginTop: "0.5rem", fontSize: "0.85rem", opacity: 0.8 }}>
+                            {resyncMessage}
+                        </div>
+                    )}
                 </section>
+                {repository && <ContextSearch projectId={project.id} />}
             </section>
         </main>
     );
