@@ -39,10 +39,44 @@ export const verifyGitHubState = (state: string) => {
     };
 };
 
+export const getGitHubBranchSha = async (
+    accessToken: string,
+    owner: string,
+    repo: string,
+    branch: string,
+): Promise<string> => {
+    const response = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/branches/${branch}`,
+        {
+            headers: {
+                Accept: "application/vnd.github+json",
+                Authorization: `Bearer ${accessToken}`,
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        },
+    );
+
+    if (!response.ok) {
+        const body = await response.text();
+        console.error("GitHub branch API error:", response.status, response.statusText, body);
+
+        if (response.status === 401) {
+            throw new Error("GitHub authentication failed");
+        }
+        if (response.status === 404) {
+            throw new Error("GitHub repository or branch not found");
+        }
+        throw new Error("Failed to fetch GitHub branch info");
+    }
+
+    const data = await response.json() as { commit: { sha: string } };
+    return data.commit.sha;
+};
+
 export const getGitHubAuthorizationUrl = (state: string) => {
     const params = new URLSearchParams({
         client_id: GITHUB_CLIENT_ID,
-        redirect_uri: "http://localhost:5001/github/callback",
+        redirect_uri: "http://localhost:8000/github/callback",
         state,
         scope: "offline_access repo",
     });
