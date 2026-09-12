@@ -14,9 +14,11 @@ import {
     getGitHubUser,
     getGitHubRepositories,
     getGitHubAccount,
-    refreshGitHubAccessToken
-
+    refreshGitHubAccessToken,
 } from "../services/github.service.js";
+
+import { ingestRepository } from "../services/repository-ingestion.service.js";
+import { analyzeRepositoryFile } from "../services/code-parser.service.js";
 
 const router = express.Router();
 
@@ -147,7 +149,7 @@ router.get("/callback", async (req, res) => {
                 ...(tokenResponse.refresh_token_expires_in && {
                     refreshTokenExpiresAt: new Date(
                         Date.now() +
-                            tokenResponse.refresh_token_expires_in * 1000,
+                        tokenResponse.refresh_token_expires_in * 1000,
                     ),
                 }),
             },
@@ -171,7 +173,7 @@ router.get("/callback", async (req, res) => {
                 ...(tokenResponse.refresh_token_expires_in && {
                     refreshTokenExpiresAt: new Date(
                         Date.now() +
-                            tokenResponse.refresh_token_expires_in * 1000,
+                        tokenResponse.refresh_token_expires_in * 1000,
                     ),
                 }),
             },
@@ -184,7 +186,8 @@ router.get("/callback", async (req, res) => {
 
         return res.redirect(
             `http://localhost:5173${decodedState.returnTo}`,
-        );    } catch (error) {
+        );
+    } catch (error) {
         console.error("❌ GitHub callback error:", error);
 
         return res.status(500).json({
@@ -312,8 +315,8 @@ router.get(
                             accessTokenExpiresAt:
                                 new Date(
                                     Date.now() +
-                                        tokenResponse.expires_in *
-                                            1000,
+                                    tokenResponse.expires_in *
+                                    1000,
                                 ),
                         }),
 
@@ -321,8 +324,8 @@ router.get(
                             refreshTokenExpiresAt:
                                 new Date(
                                     Date.now() +
-                                        tokenResponse.refresh_token_expires_in *
-                                            1000,
+                                    tokenResponse.refresh_token_expires_in *
+                                    1000,
                                 ),
                         }),
                     },
@@ -391,10 +394,101 @@ router.get("/status", authMiddleware, async (req: AuthRequest, res) => {
         connected: !!account,
         account: account
             ? {
-                  login: account.githubLogin,
-              }
+                login: account.githubLogin,
+            }
             : null,
     });
 });
+
+
+router.post(
+    "/ingest/:projectId",
+    authMiddleware,
+    async (req: AuthRequest, res) => {
+        if (!req.userId) {
+            return res.status(401).json({
+                error: "Authentication required",
+            });
+        }
+
+        const { projectId } = req.params;
+
+        if (typeof projectId !== "string") {
+            return res.status(400).json({
+                error: "Invalid project ID",
+            });
+        }
+
+        try {
+            const files = await ingestRepository(
+                projectId,
+                req.userId,
+            );
+
+            const analyzedFiles = files
+                .map(analyzeRepositoryFile)
+                .filter(
+                    (
+                        file,
+                    ): file is NonNullable<typeof file> =>
+                        file !== null,
+                );
+
+            return res.json({
+                fileCount: files.length,
+                analyzedFileCount: analyzedFiles.length,
+                files: analyzedFiles,
+            });
+        } catch (error) {
+            console.error(
+                "Repository ingestion error:",
+                error,
+            );
+
+            if (
+                error instanceof Error &&
+                error.message === "Project not found"
+            ) {
+                return res.status(404).json({
+                    error: "Project not found",
+                });
+            }
+
+            if (
+                error instanceof Error &&
+                error.message === "Repository not connected"
+            ) {
+                return res.status(404).json({
+                    error: "Repository not connected",
+                });
+            }
+
+            if (
+                error instanceof Error &&
+                error.message ===
+                "GitHub account is not connected"
+            ) {
+                return res.status(404).json({
+                    error: "GitHub account is not connected",
+                });
+            }
+
+            if (
+                error instanceof Error &&
+                error.message ===
+                "GitHub authentication failed"
+            ) {
+                return res.status(401).json({
+                    error:
+                        "GitHub connection expired. Please reconnect GitHub.",
+                });
+            }
+
+            return res.status(500).json({
+                error: "Failed to ingest repository",
+            });
+        }
+    },
+);
 
 export default router;
